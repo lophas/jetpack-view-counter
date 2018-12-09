@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description: Based on Adam Capriola's WordPress Stats View Counter @ https://wordpress.org/plugins/wp-stats-view-counter/
- * Version: 1.5.2
+ * Version: 1.5.3
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -228,6 +228,7 @@ class Jetpack_View_Counter
             return $columns;
         });
         add_filter('manage_'.$GLOBALS['typenow'].'_posts_columns', function ($cols) {
+            if(in_array($_GET['post_status'],['future','trash','draft'])) return $cols;
             $cols['pageviews'] = 'Views';
             return $cols;
         }, 11);
