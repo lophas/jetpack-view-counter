@@ -3,18 +3,20 @@
  * Plugin Name: Jetpack Stats View Counter
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
- * Description: Based on Adam Capriola's WordPress Stats View Counter @ https://wordpress.org/plugins/wp-stats-view-counter/
- * Version: 1.5.3
+ * Description:
+ * Version: 2.0
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
  */
+//Based on Adam Capriola's WordPress Stats View Counter @ https://wordpress.org/plugins/wp-stats-view-counter/
 if (!class_exists('Jetpack_View_Counter')) :
 class Jetpack_View_Counter
 {
-    const META_KEY = '_jetpack_post_views_count';//apply_filters( 'view_counter_meta_key', self::META_KEY )
-    const CACHE_HOURS = 2; //apply_filters( 'view_counter_expiration', self::CACHE_HOURS )
     const OPTIONS = 'view_counter';
+    const HOOK = __CLASS__;
+  	const SCHEDULE = 'hourly';
+//    const META_KEY = '_jetpack_post_views_count';//apply_filters( 'view_counter_meta_key', self::META_KEY )
 
     private static $_instance;
     public function instance()
@@ -39,9 +41,6 @@ class Jetpack_View_Counter
 
     public function init()
     {
-        // Save views
-        add_action('wp_footer', array( $this, 'save_views' ));
-
         // Settings page
         add_action('admin_init', array( $this, 'settings_page_init' ));
         add_action('admin_menu', array( $this, 'add_settings_page' ));
@@ -49,20 +48,33 @@ class Jetpack_View_Counter
 
         // Shortcode
         add_shortcode('view-count', array( $this, 'view_count_shortcode' ));
+
+        if (!wp_next_scheduled ( self::HOOK )) wp_schedule_event(time(), self::SCHEDULE, self::HOOK);
+     		add_action(self::HOOK, array($this, 'get_views'));
+        if(!get_transient(__CLASS__)) $this->get_views();
+//        add_filter( "get_post_metadata", function($meta_value, $post_id, $meta_key, $single ) {return $meta_key == $this->get_meta_key() ? $this->get_view_count($post_id) : $meta_value;}, PHP_INT_MAX, 4);
     }
 
+    public function get_views($settings = false) {
+      if(!$settings) $settings = $this->get_option();
+      $views = [];
+      foreach((array)$settings['post_types'] as $post_type) {
+        $ids = get_posts(array(
+            'fields'          => 'ids', // Only get post IDs
+            'posts_per_page'  => -1,
+            'post_type' => $post_type,
+        ));
+        for($i=0;$i<count($ids);$i=$i+500) {
+          $chunk = array_slice($ids,$i,500);
+          $posts = stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
+          foreach($posts as $post) $views[$post['post_id']] = $post['views'];
+        }
+      }
+      if(!empty($views)) set_transient(__CLASS__, $views, 0);
+  	}
     /**
      * Save WordPress.com views as post meta data
      */
-    public function save_views()
-    {
-        $settings = $this->get_option();
-        if (is_singular($settings['post_types'])) {
-            if (get_post_status() == 'publish') {
-                $this->get_view_count();
-            }
-        }//refresh post counter
-    }
 
     /**
      * Initialize plugin options
@@ -150,12 +162,10 @@ class Jetpack_View_Counter
      * Validate settings
      *
      */
-    public function view_counter_validate($input)
+    public function view_counter_validate($settings)
     {
-        global $wpdb;
-        $sql = 'DELETE FROM '.$wpdb->postmeta.' WHERE meta_key ="'.$this->get_meta_key().'" OR meta_key ="'.$this->get_meta_key().'_created"';
-        $wpdb->query($sql);
-        return $input;
+        $this->get_views($settings);
+        return $settings;
     }
 
     /**
@@ -190,11 +200,6 @@ class Jetpack_View_Counter
         return $output;
     }
 
-    public function get_meta_key()
-    {
-        return apply_filters('view_counter_meta_key', self::META_KEY);
-    }
-
     public function admin_init()
     {
         $settings = $this->get_option();
@@ -211,15 +216,6 @@ class Jetpack_View_Counter
 }
 </style>
 <?php
-        });
-
-        add_action('pre_get_posts', function ($query) {
-            $orderby = $_GET['orderby'];//$query->get( 'orderby');
-            // if(is_super_admin()) echo  $orderby;
-            if ('post_views' == $orderby) {
-                $query->set('meta_key', $this->get_meta_key());
-                $query->set('orderby', 'meta_value_num');
-            }
         });
 
 
@@ -241,14 +237,24 @@ class Jetpack_View_Counter
             if ('pageviews' !== $colname) {
                 return false;
             }
-
             $view_count = $this->get_view_count($post_id);
+//            $view_count = get_post_meta($post_id, $this->get_meta_key(), true);
             // Print Jetpack post views
             if ($view_count) {
                 echo  number_format(absint($view_count)) ;
             }
             //if(is_super_admin()) echo ' ['.date('H:i', apply_filters( 'view_counter_expiration', self::CACHE_HOURS )*HOUR_IN_SECONDS - time() + get_post_meta($post_id, $this->get_meta_key().'_created', true)).']';
         }, 10, 2);
+            add_action('load-edit.php', function(){
+              add_filter('posts_clauses', function($clauses) {
+                if($_GET['orderby'] !== 'post_views') return $clauses;
+                  if(!$views = get_transient(__CLASS__)) return $clauses;
+                  asort($views, SORT_NUMERIC);
+                  global $wpdb;
+                  $clauses['orderby'] = 'FIELD('.$wpdb->posts.'.ID, '.implode(',',array_keys($views)).') '.$_GET['order'];
+                  return $clauses;
+              });
+            });
     } //admin_init
 
     public function get_view_count($post_id = null)
@@ -256,43 +262,10 @@ class Jetpack_View_Counter
         if (!isset($post_id)) {
             $post_id = get_the_ID();
         }
-        if (get_post_status($post_id) != 'publish') {
-            return;
-        }
-        $settings = $this->get_option();
-        if (!in_array(get_post_type($post_id), $settings['post_types'])) {
-            return;
-        }
-
-        $view_count_created = absint(get_post_meta($post_id, $this->get_meta_key().'_created', true));
-
-        $expiration = absint(apply_filters('view_counter_expiration', self::CACHE_HOURS));
-
-//    if ( $view_count === false || time() > $view_count_created + ($expiration * HOUR_IN_SECONDS) ) {
-        if (time() > $view_count_created + ($expiration * HOUR_IN_SECONDS)) {
-            // Get the post data from Jetpack
-            $random = mt_rand(36500, 2147483647); // hack to break cache bug
-
-            $args = array(
-                'days'    => $random,
-                'post_id' => $post_id
-            );
-            $postviews = stats_get_csv('postviews', $args);
-
-            // We have a problem if there was no data returned
-            if (!isset($postviews[0]['views'])) {
-                $view_count = get_post_meta($post_id, $this->get_meta_key(), true);
-            } else {
-                $view_count = absint($postviews[0]['views']);
-                update_post_meta($post_id, $this->get_meta_key(), $view_count);
-            }
-            update_post_meta($post_id, $this->get_meta_key().'_created', time() + mt_rand(-1800, 1800));
-        } else {
-            $view_count = get_post_meta($post_id, $this->get_meta_key(), true);
-        }
-
-        return absint($view_count);
+        $views = get_transient(__CLASS__);
+        return $views[$post_id];
     }
+
     public function get_option()
     {
         $options = get_option(self::OPTIONS, ['post_types' => ['post']]);
