@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.0
+ * Version: 2.1
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -246,17 +246,22 @@ class Jetpack_View_Counter
             //if(is_super_admin()) echo ' ['.date('H:i', apply_filters( 'view_counter_expiration', self::CACHE_HOURS )*HOUR_IN_SECONDS - time() + get_post_meta($post_id, $this->get_meta_key().'_created', true)).']';
         }, 10, 2);
             add_action('load-edit.php', function(){
-              add_filter('posts_clauses', function($clauses) {
-                if($_GET['orderby'] !== 'post_views') return $clauses;
-                  if(!$views = get_transient(__CLASS__)) return $clauses;
-                  asort($views, SORT_NUMERIC);
-                  global $wpdb;
-                  $clauses['orderby'] = 'FIELD('.$wpdb->posts.'.ID, '.implode(',',array_keys($views)).') '.$_GET['order'];
-                  return $clauses;
-              });
+              add_action('pre_get_posts', [$this, 'pre_get_posts']);
             });
     } //admin_init
-
+    public function pre_get_posts() {
+      if($_GET['orderby'] !== 'post_views') return;
+      add_filter('posts_clauses', [$this, 'posts_clauses']);
+      remove_action('pre_get_posts', [$this,__FUNCTION__]);
+    }
+    public function posts_clauses($clauses) {
+        if(!$views = get_transient(__CLASS__)) return $clauses;
+        remove_filter('posts_clauses', [$this,__FUNCTION__]);
+        asort($views, SORT_NUMERIC);
+        global $wpdb;
+        $clauses['orderby'] = 'FIELD('.$wpdb->posts.'.ID, '.implode(',',array_keys($views)).') '.$_GET['order'];
+        return $clauses;
+    }
     public function get_view_count($post_id = null)
     {
         if (!isset($post_id)) {
