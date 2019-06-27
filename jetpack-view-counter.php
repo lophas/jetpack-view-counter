@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.1
+ * Version: 2.2
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -15,7 +15,8 @@ class Jetpack_View_Counter
 {
     const OPTIONS = 'view_counter';
     const HOOK = __CLASS__;
-  	const SCHEDULE = 'hourly';
+  	const CACHE_HOURS = 1;
+    private $schedule;
 //    const META_KEY = '_jetpack_post_views_count';//apply_filters( 'view_counter_meta_key', self::META_KEY )
 
     private static $_instance;
@@ -49,16 +50,30 @@ class Jetpack_View_Counter
         // Shortcode
         add_shortcode('view-count', array( $this, 'view_count_shortcode' ));
 
-        if (!wp_next_scheduled ( self::HOOK )) wp_schedule_event(time(), self::SCHEDULE, self::HOOK);
+        add_filter('cron_schedules', function($schedules){
+           if(!isset($schedules[$this->schedule])) $schedules[$this->schedule] = array( 'interval' => intval($this->schedule) * 60, 'display' => 'Every '.$this->schedule);
+           return $schedules;
+         });
      		add_action(self::HOOK, array($this, 'get_views'));
-        if(!get_transient(__CLASS__)) $this->get_views();
+
+        $this->schedule = absint(apply_filters('view_counter_expiration', self::CACHE_HOURS) * 60); //minutes
+        if($this->schedule < 5) $this->schedule = 5; //Jetpack cache time
+        $this->schedule .= ' minutes';
+        if($cron = wp_get_scheduled_event( self::HOOK )) if($cron->schedule != $this->schedule) wp_clear_scheduled_hook(self::HOOK);
+        if (!wp_next_scheduled ( self::HOOK )) wp_schedule_event(time(), $this->schedule, self::HOOK);
+
+        $settings = $this->get_option();
+        foreach((array)$settings['post_types'] as $post_type) if(!get_transient(__CLASS__.'_'.$post_type)) {
+          $this->get_views($settings);
+          break;
+        }
 //        add_filter( "get_post_metadata", function($meta_value, $post_id, $meta_key, $single ) {return $meta_key == $this->get_meta_key() ? $this->get_view_count($post_id) : $meta_value;}, PHP_INT_MAX, 4);
     }
 
     public function get_views($settings = false) {
       if(!$settings) $settings = $this->get_option();
-      $views = [];
       foreach((array)$settings['post_types'] as $post_type) {
+        $views = [];
         $ids = get_posts(array(
             'fields'          => 'ids', // Only get post IDs
             'posts_per_page'  => -1,
@@ -69,8 +84,8 @@ class Jetpack_View_Counter
           $posts = stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
           foreach($posts as $post) $views[$post['post_id']] = $post['views'];
         }
+        set_transient(__CLASS__.'_'.$post_type, $views, empty($views) ? HOUR_IN_SECONDS : DAY_IN_SECONDS);
       }
-      if(!empty($views)) set_transient(__CLASS__, $views, 0);
   	}
     /**
      * Save WordPress.com views as post meta data
@@ -251,11 +266,11 @@ class Jetpack_View_Counter
     } //admin_init
     public function pre_get_posts() {
       if($_GET['orderby'] !== 'post_views') return;
-      add_filter('posts_clauses', [$this, 'posts_clauses']);
+      add_filter('posts_clauses', [$this, 'posts_clauses'], 10, 2);
       remove_action('pre_get_posts', [$this,__FUNCTION__]);
     }
-    public function posts_clauses($clauses) {
-        if(!$views = get_transient(__CLASS__)) return $clauses;
+    public function posts_clauses($clauses, $query) {
+        if(!$views = get_transient(__CLASS__.'_'.$query->query_vars['post_type'])) return $clauses;
         remove_filter('posts_clauses', [$this,__FUNCTION__]);
         asort($views, SORT_NUMERIC);
         global $wpdb;
@@ -267,8 +282,7 @@ class Jetpack_View_Counter
         if (!isset($post_id)) {
             $post_id = get_the_ID();
         }
-        $views = get_transient(__CLASS__);
-        return $views[$post_id];
+        if($views = get_transient(__CLASS__.'_'.get_post_type($post_id))) return $views[$post_id];
     }
 
     public function get_option()
