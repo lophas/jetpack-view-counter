@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.2
+ * Version: 2.3
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -30,22 +30,22 @@ class Jetpack_View_Counter
     public function __construct()
     {
         add_action('plugins_loaded', function () {
-            if (!defined('JETPACK__VERSION')) {
-                return;
-            }
+            if (!defined('JETPACK__VERSION')) return;
             add_action('init', array( $this, 'init' ));
-            if (is_admin()) {
-                add_action('admin_init', [$this, 'admin_init']);
-            }
         });
     } //__construct
 
     public function init()
     {
+        if ( ! class_exists( 'Jetpack' ) || ! Jetpack::is_active()) return;
+
         // Settings page
-        add_action('admin_init', array( $this, 'settings_page_init' ));
-        add_action('admin_menu', array( $this, 'add_settings_page' ));
-        add_filter('plugin_action_links', array( $this, 'add_settings_link' ), 10, 2);
+        if (is_admin()) {
+            add_action('admin_init', [$this, 'admin_init']);
+            add_action('admin_init', array( $this, 'settings_page_init' ));
+            add_action('admin_menu', array( $this, 'add_settings_page' ));
+            add_filter('plugin_action_links', array( $this, 'add_settings_link' ), 10, 2);
+        }
 
         // Shortcode
         add_shortcode('view-count', array( $this, 'view_count_shortcode' ));
