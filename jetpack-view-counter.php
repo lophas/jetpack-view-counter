@@ -17,7 +17,6 @@ class Jetpack_View_Counter
     const HOOK = __CLASS__;
   	const CACHE_HOURS = 1;
     private $schedule;
-//    const META_KEY = '_jetpack_post_views_count';//apply_filters( 'view_counter_meta_key', self::META_KEY )
 
     private static $_instance;
     public function instance()
@@ -67,7 +66,6 @@ class Jetpack_View_Counter
           $this->get_views($settings);
           break;
         }
-//        add_filter( "get_post_metadata", function($meta_value, $post_id, $meta_key, $single ) {return $meta_key == $this->get_meta_key() ? $this->get_view_count($post_id) : $meta_value;}, PHP_INT_MAX, 4);
     }
 
     public function get_views($settings = false) {
@@ -205,7 +203,6 @@ class Jetpack_View_Counter
         );
         $atts = shortcode_atts($defaults, $atts);
 
-        //		$views = number_format_i18n( (double) get_post_meta( $post->ID, $this->get_meta_key(), true ) );
         $views = number_format_i18n((double) $this->get_view_count());
 
         if ($views) {
@@ -253,12 +250,10 @@ class Jetpack_View_Counter
                 return false;
             }
             $view_count = $this->get_view_count($post_id);
-//            $view_count = get_post_meta($post_id, $this->get_meta_key(), true);
             // Print Jetpack post views
             if ($view_count) {
                 echo  number_format(absint($view_count)) ;
             }
-            //if(is_super_admin()) echo ' ['.date('H:i', apply_filters( 'view_counter_expiration', self::CACHE_HOURS )*HOUR_IN_SECONDS - time() + get_post_meta($post_id, $this->get_meta_key().'_created', true)).']';
         }, 10, 2);
             add_action('load-edit.php', function(){
               add_action('pre_get_posts', [$this, 'pre_get_posts']);
