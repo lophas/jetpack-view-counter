@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.3
+ * Version: 2.4
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -81,7 +81,7 @@ class Jetpack_View_Counter
         ));
         for($i=0;$i<count($ids);$i=$i+500) {
           $chunk = array_slice($ids,$i,500);
-          $posts = stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
+          $posts = $this->stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
           foreach($posts as $post) $views[$post['post_id']] = $post['views'];
         }
         set_transient(__CLASS__.'_'.$post_type, $views, empty($views) ? HOUR_IN_SECONDS : DAY_IN_SECONDS);
@@ -289,6 +289,67 @@ class Jetpack_View_Counter
     {
         $options = get_option(self::OPTIONS, ['post_types' => ['post']]);
         return $options;
+    }
+    public function stats_get_csv( $table, $args = null ) {
+        $defaults = array( 'end' => false, 'days' => false, 'limit' => 3, 'post_id' => false, 'summarize' => '' );
+
+        $args = wp_parse_args( $args, $defaults );
+        $args['table'] = $table;
+        $args['blog_id'] = Jetpack_Options::get_option( 'id' );
+
+        $stats_csv_url = add_query_arg( $args, 'https://stats.wordpress.com/csv.php' );
+
+        $key = md5( $stats_csv_url );
+
+        // Get cache.
+        $stats_cache = get_option( 'stats_cache' );
+        if ( ! $stats_cache || ! is_array( $stats_cache ) ) {
+            $stats_cache = array();
+        }
+/*
+        // Return or expire this key.
+        if ( isset( $stats_cache[ $key ] ) ) {
+            $time = key( $stats_cache[ $key ] );
+            if ( time() - $time < 300 ) {
+                return $stats_cache[ $key ][ $time ];
+            }
+            unset( $stats_cache[ $key ] );
+        }
+*/
+        $stats_rows = array();
+        do {
+            if ( ! $stats = stats_get_remote_csv( $stats_csv_url ) ) {
+                break;
+            }
+
+            $labels = array_shift( $stats );
+
+            if ( 0 === stripos( $labels[0], 'error' ) ) {
+                break;
+            }
+
+            $stats_rows = array();
+            for ( $s = 0; isset( $stats[ $s ] ); $s++ ) {
+                $row = array();
+                foreach ( $labels as $col => $label ) {
+                    $row[ $label ] = $stats[ $s ][ $col ];
+                }
+                $stats_rows[] = $row;
+            }
+        } while ( 0 );
+
+        // Expire old keys.
+        foreach ( $stats_cache as $k => $cache ) {
+            if ( ! is_array( $cache ) || 300 < time() - key( $cache ) ) {
+                unset( $stats_cache[ $k ] );
+            }
+        }
+
+            // Set cache.
+            $stats_cache[ $key ] = array( time() => $stats_rows );
+        update_option( 'stats_cache', $stats_cache );
+
+        return $stats_rows;
     }
 } //class
 
