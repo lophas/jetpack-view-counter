@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.5
+ * Version: 2.6
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -68,7 +68,7 @@ class Jetpack_View_Counter
         $views = [];
         $ids = get_posts(array(
             'fields'          => 'ids', // Only get post IDs
-            'posts_per_page'  => -1,
+            'numberposts'  => -1,
             'post_type' => $post_type,
         ));
         for($i=0;$i<count($ids);$i=$i+500) {
