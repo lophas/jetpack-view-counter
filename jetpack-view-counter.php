@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.4
+ * Version: 2.5
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -54,11 +54,13 @@ class Jetpack_View_Counter
         $this->schedule .= ' minutes';
         if($cron = wp_get_scheduled_event( self::HOOK )) if($cron->schedule != $this->schedule) wp_clear_scheduled_hook(self::HOOK);
         if (!wp_next_scheduled ( self::HOOK )) wp_schedule_event(time(), $this->schedule, self::HOOK);
+/*
         $settings = $this->get_option();
         foreach((array)$settings['post_types'] as $post_type) if(!get_transient(__CLASS__.'_'.$post_type)) {
           $this->get_views($settings);
           break;
         }
+*/
     }
     public function get_views($settings = false) {
       if(!$settings) $settings = $this->get_option();
@@ -74,7 +76,7 @@ class Jetpack_View_Counter
           $posts = $this->stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
           foreach($posts as $post) $views[$post['post_id']] = $post['views'];
         }
-        set_transient(__CLASS__.'_'.$post_type, $views, empty($views) ? HOUR_IN_SECONDS : DAY_IN_SECONDS);
+        set_transient(__CLASS__.'_'.$post_type, $views, DAY_IN_SECONDS);
       }
   	}
     /**
