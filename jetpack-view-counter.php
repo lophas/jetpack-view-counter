@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.8
+ * Version: 2.9
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -16,7 +16,13 @@ class Jetpack_View_Counter
     const OPTIONS = 'view_counter';
     const HOOK = __CLASS__;
   	const CACHE_HOURS = 1;
+    const META = 'jetpack_view_count';
+    const STATE = 'view_counter_state';
+    const RECENT_DAYS = 2;
+    const CHUNK = 500;
+    const FULL_CHUNKS = 4; // chunks of the full refresh a run: 2000 posts
     private $schedule;
+    private $state;
     private static $_instance;
     public static function instance()
     {
@@ -62,23 +68,79 @@ class Jetpack_View_Counter
         }
 */
     }
+    /**
+     * Every run: the all-time views of the posts viewed in the last RECENT_DAYS whose views changed since
+     * the previous run, and one slice of the daily full refresh. Views are kept in post meta (META).
+     */
     public function get_views($settings = false) {
       if(!$settings) $settings = $this->get_option();
+      $state = $this->state();
+      $recent = [];
+      foreach($this->stats_get_csv('postviews', array('days' => self::RECENT_DAYS, 'limit' => -1)) as $post) $recent[$post['post_id']] = $post['views'];
       foreach((array)$settings['post_types'] as $post_type) {
-        $views = [];
-        $ids = get_posts(array(
-            'fields'          => 'ids', // Only get post IDs
-            'numberposts'  => -1,
-            'post_type' => $post_type,
-        ));
-        for($i=0;$i<count($ids);$i=$i+500) {
-          $chunk = array_slice($ids,$i,500);
-          $posts = $this->stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
-          foreach($posts as $post) $views[$post['post_id']] = $post['views'];
+        $typed = array_intersect_key($recent, array_flip($this->of_type(array_keys($recent), $post_type)));
+        $old = isset($state['recent'][$post_type]) ? $state['recent'][$post_type] : [];
+        $changed = [];
+        foreach($typed as $id => $views) if(!isset($old[$id]) || $old[$id] != $views) $changed[] = $id;
+        $this->update_totals($changed);
+        $state['recent'][$post_type] = $typed;
+        $full = isset($state['full'][$post_type]) ? $state['full'][$post_type] : ['offset' => 0, 'done' => 0];
+        if(time() - $full['done'] >= DAY_IN_SECONDS) {
+          $ids = get_posts(array(
+              'fields'      => 'ids',
+              'numberposts' => self::CHUNK * self::FULL_CHUNKS,
+              'offset'      => $full['offset'],
+              'post_type'   => $post_type,
+              'orderby'     => 'ID',
+              'order'       => 'ASC',
+          ));
+          $this->update_totals($ids);
+          if(count($ids) < self::CHUNK * self::FULL_CHUNKS) {
+            $full = ['offset' => 0, 'done' => time()];
+            $state['migrated'][$post_type] = 1;
+            delete_transient(__CLASS__.'_'.$post_type); // the store before 2.9
+          } else {
+            $full['offset'] += count($ids);
+          }
         }
-        set_transient(__CLASS__.'_'.$post_type, $views, DAY_IN_SECONDS);
+        $state['full'][$post_type] = $full;
       }
+      $this->state = $state;
+      update_option(self::STATE, $state, false);
   	}
+    /**
+     * All-time views of the given posts from Jetpack into post meta, CHUNK posts a call; only changed values
+     * are written, a post with no views has no meta. A failed call (no rows at all) leaves its chunk alone.
+     */
+    private function update_totals($ids) {
+      for($i=0;$i<count($ids);$i=$i+self::CHUNK) {
+        $chunk = array_slice($ids,$i,self::CHUNK);
+        $posts = $this->stats_get_csv('postviews', array('days' => -1, 'limit' => -1, 'post_id' => implode(',',$chunk)));
+        if(empty($posts)) continue;
+        $views = [];
+        foreach($posts as $post) $views[$post['post_id']] = (int) $post['views'];
+        update_meta_cache('post', $chunk);
+        foreach($chunk as $id) {
+          $new = isset($views[$id]) ? $views[$id] : 0;
+          if($new == (int) get_post_meta($id, self::META, true)) continue;
+          if($new) update_post_meta($id, self::META, $new);
+          else delete_post_meta($id, self::META);
+        }
+      }
+    }
+    private function of_type($ids, $post_type) {
+      if(empty($ids)) return [];
+      return get_posts(array(
+          'fields'      => 'ids',
+          'numberposts' => -1,
+          'post__in'    => array_map('absint', $ids),
+          'post_type'   => $post_type,
+      ));
+    }
+    private function state() {
+      if(!isset($this->state)) $this->state = get_option(self::STATE, []);
+      return $this->state;
+    }
     /**
      * Save WordPress.com views as post meta data
      */
@@ -183,7 +245,7 @@ class Jetpack_View_Counter
             'before' => '',
         );
         $atts = shortcode_atts($defaults, $atts);
-        $views = number_format_i18n((double) $this->get_view_count());
+        $views = number_format_i18n((float) $this->get_view_count());
         if ($views) {
             $output = sprintf('<span class="view-count">%2$s%1$s%3$s</span>', $views, $atts['before'], $atts['after']);
         }
@@ -235,10 +297,21 @@ class Jetpack_View_Counter
               add_action('pre_get_posts', [$this, 'pre_get_posts']);
             });
     } //admin_init
-    public function pre_get_posts() {
-      if($_GET['orderby'] !== 'post_views') return;
-      add_filter('posts_clauses', [$this, 'posts_clauses'], 10, 2);
+    public function pre_get_posts($query) {
+      if(!isset($_GET['orderby']) || $_GET['orderby'] !== 'post_views') return;
       remove_action('pre_get_posts', [$this,__FUNCTION__]);
+      $state = $this->state();
+      if(empty($state['migrated'][$query->get('post_type') ?: 'post'])) {
+        add_filter('posts_clauses', [$this, 'posts_clauses'], 10, 2);
+        return;
+      }
+      // posts without views have no meta: the NOT EXISTS clause keeps them in the list
+      $query->set('meta_query', array(
+          'relation' => 'OR',
+          'views' => array('key' => self::META, 'type' => 'NUMERIC'),
+          array('key' => self::META, 'compare' => 'NOT EXISTS'),
+      ));
+      $query->set('orderby', array('views' => (isset($_GET['order']) && strtolower($_GET['order']) === 'asc') ? 'ASC' : 'DESC'));
     }
     public function posts_clauses($clauses, $query) {
         if(!$views = get_transient(__CLASS__.'_'.$query->query_vars['post_type'])) return $clauses;
@@ -253,7 +326,13 @@ class Jetpack_View_Counter
         if (!isset($post_id)) {
             $post_id = get_the_ID();
         }
-        if($views = get_transient(__CLASS__.'_'.get_post_type($post_id))) return $views[$post_id];
+        $views = get_post_meta($post_id, self::META, true);
+        if($views !== '') return (int) $views;
+        // until the first full refresh has gone round, the store before 2.9
+        $post_type = get_post_type($post_id);
+        $state = $this->state();
+        if(empty($state['migrated'][$post_type]) && ($old = get_transient(__CLASS__.'_'.$post_type)) && isset($old[$post_id])) return $old[$post_id];
+        return 0;
     }
     public function get_option()
     {
