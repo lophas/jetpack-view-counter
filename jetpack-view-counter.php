@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/lophas/jetpack-view-counter
  * GitHub Plugin URI: https://github.com/lophas/jetpack-view-counter
  * Description:
- * Version: 2.6
+ * Version: 2.8
  * Author: Attila Seres
  * Author URI:
  * License: GPLv2
@@ -18,7 +18,7 @@ class Jetpack_View_Counter
   	const CACHE_HOURS = 1;
     private $schedule;
     private static $_instance;
-    public function instance()
+    public static function instance()
     {
         if (!isset(self::$_instance)) {
             self::$_instance =  new self();
@@ -198,10 +198,14 @@ class Jetpack_View_Counter
         add_action('admin_head-edit.php', function () {
             ?>
 <style>
+<?php if(empty($_GET['post_status']) || $_GET['all_posts'] || in_array($_GET['post_status'], ['publish', 'all'])) : ?>
 #pageviews {
 	width: 6em;
 	padding:0;
 }
+<?php else : ?>
+.column-pageviews{display:none}
+<?php endif ?>
 </style>
 <?php
         });
@@ -210,7 +214,6 @@ class Jetpack_View_Counter
             return $columns;
         });
         add_filter('manage_'.$GLOBALS['typenow'].'_posts_columns', function ($cols) {
-            if(in_array($_GET['post_status'],['future','trash','draft'])) return $cols;
             $cols['pageviews'] = 'Views';
             return $cols;
         }, 11);
